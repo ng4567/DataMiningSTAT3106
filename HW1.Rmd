@@ -1,0 +1,58 @@
+---
+title: "HW1"
+author: "Nikhil Gopal"
+date: "1/21/2021"
+output: pdf_document
+---
+
+**Question 1**
+
+```{r}
+setwd("/Users/d/Google Drive/Notability/Data Mining/HW1")
+
+library(alphavantager)
+
+#Q1
+av_api_key("L67YQFKNSDAR09NT")
+voo <- av_get(symbol = "VOO", av_fun = "TIME_SERIES_WEEKLY", outputsize = "full")
+gdxj <- av_get(symbol = "GDXJ", av_fun = "TIME_SERIES_WEEKLY", outputsize = "full")
+
+
+dim(voo)
+#541 weeks in VOO
+dim(gdxj)
+#584 weeks in GDXJ
+```
+
+There are 541 weeks in the VOO data and 584 in the GDXJ data
+
+**Question 2**
+
+```{r}
+#Q2
+voo_reg_line <- lm(voo$close~voo$timestamp)
+library(ggplot2)
+
+ggplot(data=voo, aes(x=timestamp, y=close)) + geom_point()+geom_smooth(method=lm)+labs(x="Date", y="Closing Price")
+
+```
+
+**Question 3**
+
+```{r}
+#q3
+
+
+#merging code
+#X=VOO, Y=GDXJ
+merged_data <- merge(voo, gdxj, by="timestamp")
+
+#R=.22
+cor(merged_data$close.y, residuals(voo_reg_line))
+
+
+plot(residuals(voo_reg_line), merged_data$close.y, xlab = "VOO Residuals (in USD)", ylab = "GDXJ Closing Price (USD)", main = "GDXJ Closing Price vs VOO Residuals, R^2 = 0.22")
+
+```
+
+Our scatter plot shows a weak, positive relationship between the price of gold and the residuals of a model of stock market performance between 2010-2020 (R=0.22). The idea that gold and stock market prices are inversely related should be demonstrated by a negative relationship between residuals and gold price. Residuals are a measure of error, and positive residuals mean that market did better than expected, which should result in a decrease in gold price. However, our scatter plot shows the opposite, meaning that we do not have sufficient evidence of an inverse relationship between the prices of gold and the stock market.

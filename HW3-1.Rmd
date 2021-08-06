@@ -1,0 +1,314 @@
+---
+title: "HW3"
+author: "Nikhil Gopal"
+date: "3/10/2021"
+output: pdf_document
+---
+**Question 0** 
+
+```{r}
+setwd("C:/Users/d/Google Drive/Notability/Data Mining/psets/HW3")
+
+library(dplyr)
+library(caret)
+library(glmnet)
+library(factoextra)
+library(ggfortify)
+#Question 0
+
+data <- read.csv("non_retweets_dc_inaug_steal.csv")
+
+data$date_numeric <- as.Date(data$created_at)
+
+
+#max date
+max(data$created_at)
+
+#min date
+a <- sort(data$created_at, decreasing = TRUE)
+
+tail(a)
+
+#visualization
+hist(data$date_numeric, breaks = 5, freq = TRUE)
+
+
+```
+
+The tweets range from 1/3/21-1/26/21
+
+**Question 1** 
+
+```{r}
+#Question 1
+
+
+
+#select all the columns that have inaug in the name
+inauguartion_features <- data%>% dplyr:: select(grep("inaug", names(data)))
+
+#create the new column in the DF
+data$has_inaug <- inauguartion_features$X.bidenharrisinaugur+inauguartion_features$X.bideninaugur+inauguartion_features$X.inaugur+inauguartion_features$X.inauguration2021+inauguartion_features$X.inaugurationday+inauguartion_features$X.inaugurationday2021+inauguartion_features$inaugur
+
+
+
+t <- table(data$has_inaug)
+t
+
+#0: 9484
+
+```
+
+The fraction of records that have non zero frequencies is #9484/16005
+
+**Question 2** 
+
+```{r}
+
+#Question 2
+
+#create a vector with names of columns to drop
+df2 <- data %>% select(-created_at, -tweet_body,-like_count,-reply_count,-retweet_count)
+
+
+names_list <- names(inauguartion_features)
+names_list <- names_list[-8]
+
+
+df2_no_NA <- df2 %>% select(-names_list)
+  
+
+df2_no_NA <- na.exclude(df2_no_NA)
+
+
+df_no_y <- subset(df2_no_NA, select = -has_inaug)
+
+set.seed(123)
+
+#OLS
+train.control <- trainControl(method = "cv", number = 5)
+
+OLS_model <- train(has_inaug~., data = df2_no_NA, 
+                   method = "lm", 
+                   trControl = train.control)
+
+print(OLS_model)
+
+#Lasso
+
+#preds <- model.matrix(has_inaug ~ ., data)[,-1]
+
+#lasso <- cv.glmnet(preds, df2_no_NA$has_inaug, alpha = 1, nfolds = 5)
+
+
+indexes <- sample(2, nrow(df2_no_NA), replace = T, prob = c(0.8, 0.2))
+train_indexes <-df2_no_NA[indexes==1,]
+test_indexes <- df2_no_NA[indexes==2,]
+
+lasso_model <- train(has_inaug~.,
+                     train_indexes,
+                     method = 'glmnet',
+                     trControl = train.control,
+                     tuneGrid = expand.grid(alpha = 1,
+                                            lambda = seq(0.0001, 1, length=5)))
+
+
+#lambda min = 0.000100
+
+#Ridge
+
+#ridge <- cv.glmnet(preds, df2_no_NA$has_inaug, alpha = 0, nfolds = 5)
+
+#ridge
+
+ridge_model <- train(has_inaug~.,
+                     train_indexes,
+                     method = 'glmnet',
+                     trControl = train.control,
+                     tuneGrid = expand.grid(alpha = 1,
+                                            lambda = 0.0001))
+```
+
+```{r}
+
+#Step wise
+
+#Wayne method for Step Wise
+ols = lm(has_inaug ~ ., df2_no_NA)
+
+
+ols_summ = summary(ols)$coefficients
+
+okay_features = rownames(ols_summ)[ols_summ[, 4] < 0.05]
+
+okay_features = okay_features[-1]
+okay_features[1] <- "X.abddarb"
+
+init_formula = paste('has_inaug~', paste(okay_features, collapse='+'))
+
+init_mod = lm(as.formula(init_formula), df2_no_NA)
+
+
+
+#caret step wise 5 fold cv
+step_model <- train(as.formula(init_formula), data = df2_no_NA, method = "glmStepAIC", 
+                    trControl = train.control)
+
+
+```
+
+```{r}
+#MSE
+
+#OLS: 0.4446813^2 = 0.19774145857
+#lasso: 0.4438917^2 = 0.19703984132
+#ridge: 0.4434593^2 = 0.19665615075 
+#stepwise: 0.4373612^2 = 0.1912848
+
+
+models <- c("OLS", "Lasso", "Ridge", "Stepwise")
+MSEs <- c(0.19774145857, 0.19703984132, 0.19665615075, 0.1912848)
+
+barplot(MSEs, main="MSEs for Different Regression Models",
+        xlab="Model", col=c("darkblue","red", "yellow", "green"),
+        ylab = "MSE")
+
+
+
+```
+
+
+MSE:
+
+OLS: 0.4446813^2 = 0.19774145857
+lasso: 0.4438917^2 = 0.19703984132
+ridge: 0.4434593^2 = 0.19665615075 
+stepwise: 0.4373612^2 = 0.1912848
+
+
+**Question 3** 
+
+```{r}
+
+#Question 3
+# "~." sets the upper model for the `scope` as using all of the features
+step_mod <- step(init_mod, "~.")
+
+
+
+```
+
+
+```{r}
+plot(step_mod$coefficients, ylab = "Coefficients", 
+     main = "Coefficients in Stepwise Model no CV")
+
+```
+
+
+**Question 4** 
+
+```{r}
+#Question 4 - strongest coefficients
+
+head(sort(step_mod$coefficients, decreasing = TRUE))
+
+tail(sort(step_mod$coefficients, decreasing = TRUE))
+
+
+```
+The top tokens are rhythm, X.bidenharris, X.joebiden, grant, X.washington_dc, X.abddarb2.0
+
+
+**Question 5** 
+
+```{r}
+
+#Question 5
+
+
+ridge_obj <- function(parameter, X, Y, lambda, shrink_target){
+  
+  if(missing(shrink_target == TRUE)){
+    b_hat <- matrix(parameter, ncol = 1)
+    tse <- sum((Y-X %*% beta_hat)^2)
+    beta_penality <- sum(beta_hat^2)
+    
+    return(tse+lambda*beta_penality)
+    
+  }else{
+    b_hat <- matrix(parameter, ncol = 1)
+    tse <- sum((Y-X %*% beta_hat)^2)
+    beta_penalty <- sum((beta_hat-shrink_target)^2)
+    return(tse+lambda*beta_penalty)
+    
+  }
+}
+
+
+```
+
+**Question 6** 
+
+```{r}
+#Question 6
+
+#makes the df into a numeric data type
+df3 <- sapply(df2_no_NA, as.numeric)
+
+
+#data_matrix (correct) version
+
+df3_matrix <- data.matrix(df3)
+pr_out <- prcomp(df3_matrix, scale=TRUE)
+
+#Eigen plot
+plot(pr_out$sdev, main="")
+
+#fviz eig plot
+fviz_eig(pr_out, top = 10)
+
+
+
+```
+
+
+It seems like 2 components have interesting features, there is almost a 50% decrease in variance explained from component 2 to 3.
+
+
+
+
+
+
+
+
+```{r}
+
+#for loop to plot loadings
+#par(mfrow=c(4, 3))
+#for(i in seq_len(ncol(pr_out$rotation[,1:12]))){
+#  eigenvec <- pr_out$rotation[, i]
+#  plot(eigenvec)
+#  abline(h=0)
+#}
+
+# Contributions of variables to PC1
+fviz_contrib(pr_out, choice = "var", axes = 1, top = 10)
+
+
+
+```
+
+
+
+X.aukland, X.outland, corporatedivewir, outland, X.edinburgh, X.Scotland, photographi, X_sydney, X.toronto appeared to be significant for the first component. This could show that the inaguration was recieving worldwide attention.
+
+```{r}
+# Contributions of variables to PC2
+fviz_contrib(pr_out, choice = "var", axes = 2, top = 10)
+
+```
+
+
+
+Georgia, X.senatorloeffl, X.senatordavidpurdue, X.riggedelect and doubl appeared to be significant for this component. This means that a lot of attention was placed on the GA senate runoff election, which would hold the balance of power in the senate, and thus directly affect Biden's ability to implement his policy agenda. Thus, Twitter was very focused on this.

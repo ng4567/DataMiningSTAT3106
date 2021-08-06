@@ -1,0 +1,837 @@
+---
+title: "merged code"
+author: "Bernadette Gostelow; Nikhil Gopal"
+date: "2/16/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+```{r}
+sessionInfo()
+Sys.setenv('R_MAX_VSIZE'=32000000000)
+```
+
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+knitr::opts_chunk$set(
+  error = TRUE)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+```{r}
+install.packages("gender")
+install.packages('devtools')
+library(devtools)
+install_github("ropensci/genderdata")
+library(gender)
+library(genderdata)
+library(RSocrata)
+library(dplyr)
+library(data.table)
+install.packages("ggplot2")
+library(ggplot2)
+library(plotly)
+library(survminer)
+library(caret)
+library(randomForest)
+library(caTools)
+library(dplyr)
+library(plyr)
+library(tidyr)
+library(survival)
+library(ranger)
+library(ggfortify)
+library(ROCR)
+library(pscl)
+library(nnet)
+library(stargazer)
+install.packages("rms")
+library(rms)
+library(tinytex)
+```
+
+```{r}
+#pull relevant data
+
+#query payroll data, subset per annum data only
+dataPayroll <- read.socrata(
+  "https://data.cityofnewyork.us/resource/k397-673e.csv?pay_basis=per Annum",
+  app_token = "AlF31rznLXShjXrQuOxgTs32x",
+  email     = "bpg2126@columbia.edu",
+  password  = "c18b31e29G!"
+)
+
+#find the years of the data to ensure that 311 data match up 
+summary(dataPayroll$fiscal_year)
+
+#query 311 data
+data311.1 <- read.socrata(
+  "https://data.cityofnewyork.us/resource/erm2-nwe9.csv?$where=created_date between '2020-02-06T12:00:00' and '2020-02-13T14:00:00'",
+  app_token = "AlF31rznLXShjXrQuOxgTs32x",
+  email     = "bpg2126@columbia.edu",
+  password  = "c18b31e29G!"
+)
+```
+
+```{r}
+#data wrangling payroll
+
+#find boroughs included in payroll
+unique(dataPayroll[c("work_location_borough")])
+#subset NYC locations only
+PD<- subset(dataPayroll,work_location_borough==c("BROOKLYN","MANHATTAN","QUEENS","BRONX", "RICHMOND"))
+#recode
+PD$loc <- car::recode(PD$work_location_borough, "'BRONX'=0; 'BROOKLYN'=1; 'MANHATTAN'=2; 'QUEENS'=3; 'RICHMOND'=4")
+head(PD)
+
+#find total salary 
+PD$totalsalary<-  PD$regular_gross_paid + PD$total_ot_paid + PD$total_other_pay
+
+#find total hours worked 
+PD$hours<- PD$regular_hours + PD$ot_hours
+
+#overtime percentage (by hours)
+PD$otpercentage<- PD$ot_hours/PD$hours*100
+PD$otpercentage<- as.numeric(PD$otpercentage)
+
+#find hourly salary
+PD$hourly<- PD$totalsalary/PD$hours
+
+#investigate hourly values
+summary(PD$hourly)
+#only include values with hourly values more than 0 and less than infinity. These values are either accounting errors or records of people who have negative pay
+PD<- subset(PD, PD$hourly > '0')
+PD<- subset(PD, PD$hourly < 'Inf')
+```
+
+
+```{r}
+#include race in dataset
+last_name<- PD$last_name
+race<- read.csv("/Users/bernadettegostelow/Downloads/names.csv")
+RACE<- race
+RACE$white <- as.numeric(as.character(race$pctwhite))
+RACE$black <- as.numeric(as.character(race$pctblack))
+RACE$asian <- as.numeric(as.character(race$pctapi))
+RACE$indian <- as.numeric(as.character(race$pctaian))
+RACE$hispanic <- as.numeric(as.character(race$pcthispanic))
+drops <- c("rank","count", "prop100k", "cum_prop100k",  "pctwhite", "pctblack", "pctapi", "pctaian", "pcthispanic", "pct2prace", "name")
+RACE<- RACE[ , !(names(RACE) %in% drops)]
+race$likelyrace<- colnames(RACE)[max.col(RACE, ties.method = "first")]
+race$last_name<- race$name
+racetomerge<- race[c("last_name", "likelyrace")]
+DF<- left_join(PD, racetomerge, by= "last_name")
+head(DF)
+```
+
+```{r}
+#include gender in the dataset
+firstname<- as.character(DF$first_name)
+gender<-gender(firstname, method = c("ssa", "ipums", "napp", "kantrowitz", "genderize", "demo"))
+gender$first_name<- gender$name
+GENDER<- gender[c("first_name", "gender")]
+GENDER$first_name<- as.factor(GENDER$first_name)
+#add gender to the payroll dataset 
+gendertomerge<- unique(GENDER)
+DF1<- left_join(DF, gendertomerge, by= "first_name")
+head(DF1)
+```
+```{r}
+#get the total employee spending by borough
+tapply(DF1$totalsalary, DF1$work_location_borough, sum)
+
+#assign total spending values to the variables
+BronxTotalSpending <- 2015707658 
+QueensTotalSpending <- 4299835733   
+ManhattanTotalSpending <- 7262642586     
+BrooklynTotalSpending <- 3782353765    
+#Called Richmond in this dataset
+StatenIslandTotalSpending <-  597475726  
+
+#Add the new by borough spending col
+data311.1$totalboroughspending[data311.1$borough == "MANHATTAN"] <- 7262642586  
+data311.1$totalboroughspending[data311.1$borough == "BRONX"] <- 2015707658 
+data311.1$totalboroughspending[data311.1$borough == "BROOKLYN"] <- 3782353765
+data311.1$totalboroughspending[data311.1$borough == "QUEENS"] <- 4299835733 
+data311.1$totalboroughspending[data311.1$borough == "STATEN ISLAND"] <- 597475726
+
+data311.2$totalboroughspending[data311.2$borough == "MANHATTAN"] <- 7262642586  
+data311.2$totalboroughspending[data311.2$borough == "BRONX"] <- 2015707658 
+data311.2$totalboroughspending[data311.2$borough == "BROOKLYN"] <- 3782353765
+data311.2$totalboroughspending[data311.2$borough == "QUEENS"] <- 4299835733 
+data311.2$totalboroughspending[data311.2$borough == "STATEN ISLAND"] <- 597475726
+
+#311 data wrangling
+#create new case length column to figure out how long cases take to be resolved
+data311.1$case_length = as.Date(data311.1$closed_date)-as.Date(data311.1$created_date)
+data311.1$status = as.factor(data311.1$status)
+data311.1$agency = as.factor(data311.1$agency)
+data311.1$case_length = as.numeric(data311.1$case_length)
+data311.1$location = as.factor(data311.1$location)
+
+data311.2$case_length = as.Date(data311.2$closed_date)-as.Date(data311.2$created_date)
+data311.2$status = as.factor(data311.2$status)
+data311.2$agency = as.factor(data311.2$agency)
+data311.2$case_length = as.numeric(data311.2$case_length)
+data311.2$location = as.factor(data311.2$location)
+```
+
+```{r}
+#A1
+#theory that higher overtime means insufficient manpower
+#years worked 
+DF1$start <- as.Date(DF1$agency_start_date)
+DF1$start <- format(DF1$start, "%Y")
+DF1$start<- as.numeric(DF1$start)
+DF1$end<- DF1$fiscal_year
+DF1$end<- as.numeric(DF1$end)
+DF1$duration<- DF1$end-DF1$start
+DF1duration<- as.numeric(DF1$duration)
+
+#borough
+DF$loc<- DF$work_location_borough
+loc<- DF$loc
+DF$work_location_borough <- car::recode(loc, "'BRONX'=0; 'BROOKLYN'=1; 'MANHATTAN'=2; 'QUEENS'=3; 'RICHMOND'=4")
+```
+
+
+```{r}
+#by borough
+#1. Manhattan 
+dfm<- DF1[DF1$loc == '2',]
+dfmregularhourstotal<- sum(dfm$regular_hours)
+dfmovertimetotal<- sum(dfm$ot_hours)
+dfmtotal<- dfmregularhourstotal+ dfmovertimetotal
+totalovertimepercentageM<- dfmovertimetotal/dfmtotal*100
+head(totalovertimepercentageM)
+
+#look at 2020 specific data
+dfms<-subset(dfm, dfm$fiscal_year==c("2020"))
+dfmsregularhourstotal<- sum(dfms$regular_hours)
+dfmsovertimetotal<- sum(dfms$ot_hours)
+dfmstotal<- dfmsregularhourstotal+ dfmsovertimetotal
+totalovertimepercentageMS<- dfmsovertimetotal/dfmstotal*100
+
+#average response time
+Mresponse<- subset(data311.1, data311.1$borough==c("MANHATTAN"))
+Mrt<- mean(na.omit(Mresponse$case_length))
+```
+
+
+```{r}
+#2. Brooklyn
+dfb<- DF1[DF1$loc == '1',]
+dfbregularhourstotal<- sum(dfb$regular_hours)
+dfbovertimetotal<- sum(dfb$ot_hours)
+dfbtotal<- dfbregularhourstotal+ dfbovertimetotal
+totalovertimepercentageB<- dfbovertimetotal/dfbtotal*100
+head(totalovertimepercentageB)
+
+#look at 2020 specific data
+dfbs<-subset(dfb, dfb$fiscal_year==c("2020"))
+dfbsregularhourstotal<- sum(dfbs$regular_hours)
+dfbsovertimetotal<- sum(dfbs$ot_hours)
+dfbstotal<- dfbsregularhourstotal+ dfbsovertimetotal
+totalovertimepercentageBS<- dfbsovertimetotal/dfbstotal*100
+
+#average response time
+Bresponse<- subset(data311.1, data311.1$borough==c("BROOKLYN"))
+Brt<- mean(na.omit(Bresponse$case_length))
+```
+
+
+```{r}
+#3. Bronx
+dfbb<- DF1[DF1$loc == '0',]
+dfbbregularhourstotal<- sum(dfbb$regular_hours)
+dfbbovertimetotal<- sum(dfbb$ot_hours)
+dfbbtotal<- dfbbregularhourstotal+ dfbbovertimetotal
+totalovertimepercentageB<- dfbbovertimetotal/dfbbtotal*100
+head(totalovertimepercentageB)
+
+#look at 2020 specific data
+dfbbs<-subset(dfbb, dfbb$fiscal_year==c("2020"))
+dfbbsregularhourstotal<- sum(dfbbs$regular_hours)
+dfbbsovertimetotal<- sum(dfbbs$ot_hours)
+dfbbstotal<- dfbbsregularhourstotal+ dfbbsovertimetotal
+totalovertimepercentageBBS<- dfbbsovertimetotal/dfbbstotal*100
+
+#average response time
+BBresponse<- subset(data311.1, data311.1$borough==c("BRONX"))
+BBrt<- mean(na.omit(BBresponse$case_length))
+```
+
+
+```{r}
+#4. Queens
+dfq<- DF1[DF1$loc == '3',]
+dfqregularhourstotal<- sum(dfq$regular_hours)
+dfqovertimetotal<- sum(dfq$ot_hours)
+dfqtotal<- dfqregularhourstotal+ dfqovertimetotal
+totalovertimepercentageQ<- dfqovertimetotal/dfqtotal*100
+head(totalovertimepercentageQ)
+
+#look at 2020 specific data
+dfqs<-subset(dfq, dfq$fiscal_year==c("2020"))
+dfqsregularhourstotal<- sum(dfqs$regular_hours)
+dfqsovertimetotal<- sum(dfqs$ot_hours)
+dfqstotal<- dfqsregularhourstotal+ dfqsovertimetotal
+totalovertimepercentageQS<- dfqsovertimetotal/dfqstotal*100
+
+#average response time
+Qresponse<- subset(data311.1, data311.1$borough==c("QUEENS"))
+Qrt<- mean(na.omit(Qresponse$case_length))
+```
+
+
+```{r}
+#5. Richmond
+dfr<- DF1[DF1$loc == '4',]
+dfrregularhourstotal<- sum(dfr$regular_hours)
+dfrovertimetotal<- sum(dfr$ot_hours)
+dfrtotal<- dfrregularhourstotal+ dfrovertimetotal
+totalovertimepercentageR<- dfrovertimetotal/dfrtotal*100
+head(totalovertimepercentageR)
+
+#look at 2020 specific data
+dfrs<-subset(dfr, dfr$fiscal_year==c("2020"))
+dfrsregularhourstotal<- sum(dfrs$regular_hours)
+dfrsovertimetotal<- sum(dfrs$ot_hours)
+dfrstotal<- dfrsregularhourstotal+ dfrsovertimetotal
+totalovertimepercentageRS<- dfrsovertimetotal/dfrstotal*100
+
+#average response time
+Rresponse<- subset(data311.1, data311.1$borough==c("STATEN ISLAND"))
+Rrt<- mean(na.omit(Rresponse$case_length))
+```
+
+```{r}
+ot= c(totalovertimepercentageBBS, totalovertimepercentageBS, totalovertimepercentageMS, totalovertimepercentageQS, totalovertimepercentageRS)
+r= c(Mrt, Brt, BBrt, Qrt, Rrt)
+plot<- plot(ot, r)
+#preliminarily, there does not appear to be a correlation between overtime percentage and response time
+```
+
+```{r}
+#A2 salary and overtime percentage across gender and race
+#gender disparity
+DF1$gender<- car::recode(DF1$gender, "'male'=-1; 'female'=1")
+dfmale<- DF1[DF1$gender == '-1',]
+dffemale<- DF1[DF1$gender == '1',]
+
+#average male pay
+totalmalesalary<- dfmale$totalsalary
+totalmalepercentageot<- dfmale$otpercentage
+totalmalehourly<- dfmale$hourly
+head(mean(na.omit(totalmalesalary)))
+head(mean(na.omit(totalmalepercentageot)))
+head(mean(na.omit(totalmalehourly)))
+
+#average female pay
+totalfemalesalary<- dffemale$totalsalary
+totalfemalepercentageot<- dffemale$otpercentage
+totalfemalehourly<- dffemale$hourly
+head(mean(na.omit(totalfemalesalary)))
+head(mean(na.omit(totalfemalepercentageot)))
+head(mean(na.omit(totalfemalehourly)))
+```
+-preliminarily, it seems that women and men are paid the same hourly rate and assuming that both men and women have the same regular hours, men may have a higher annual salary because they do more overtime (higher percentage of salary from overtime indicates more overtime)
+```{r}
+#repeat for race
+DF1$likelyrace<- car::recode(DF1$likelyrace, "'black'=0; 'hispanic'=1; 'indian'=2; 'asian'=3; 'white'=4")
+dfblack<- DF1[DF1$likelyrace == '0',]
+dfhispanic<- DF1[DF1$likelyrace == '1',]
+dfindian<- DF1[DF1$likelyrace == '2',]
+dfasian<- DF1[DF1$likelyrace == '3',]
+dfwhite<- DF1[DF1$likelyrace == '4',]
+
+#average black pay
+totalblacksalary<- dfblack$totalsalary
+totalblackpercentageot<- dfblack$otpercentage
+totalblackhourly<- dfblack$hourly
+head(mean(na.omit(totalblacksalary)))
+head(mean(na.omit(totalblackpercentageot)))
+head(mean(na.omit(totalblackhourly)))
+
+#average hispanic pay
+totalhispanicsalary<- dfhispanic$totalsalary
+totalhispanicpercentageot<- dfhispanic$otpercentage
+totalhispanichourly<- dfhispanic$hourly
+head(mean(na.omit(totalhispanicsalary)))
+head(mean(na.omit(totalhispanicpercentageot)))
+head(mean(na.omit(totalhispanichourly)))
+
+#average indian pay
+totalindiansalary<- dfindian$totalsalary
+totalindianpercentageot<- dfindian$otpercentage
+totalindianhourly<- dfindian$hourly
+head(mean(na.omit(totalindiansalary)))
+head(mean(na.omit(totalindianpercentageot)))
+head(mean(na.omit(totalindianhourly)))
+
+#average asian pay
+totalasiansalary<- dfasian$totalsalary
+totalasianpercentageot<- dfasian$otpercentage
+totalasianhourly<- dfasian$hourly
+head(mean(na.omit(totalasiansalary)))
+head(mean(na.omit(totalasianpercentageot)))
+head(mean(na.omit(totalasianhourly)))
+
+#average white pay
+totalwhitesalary<- dfwhite$totalsalary
+totalwhitepercentageot<- dfwhite$otpercentage
+totalwhitehourly<- dfwhite$hourly
+head(mean(na.omit(totalwhitesalary)))
+head(mean(na.omit(totalwhitepercentageot)))
+head(mean(na.omit(totalwhitehourly)))
+```
+-There is a huge gap in the hourly pay between race with American Indians earning 35.6 per hour and Asians earning 46 per hour. Whites have the highest total salary at 78.8k whereas Indians have the lowest total salary at 66.6k. Hispanics are the most likely to do overtime whereas Indians are the least likely to. These results indicate that race may influence salary.
+
+```{r}
+#train-test split
+DFtraintest<- DF1
+DFtraintest$title<-as.factor(DFtraintest$title)
+unclass(DFtraintest$title)
+DFtraintest$title<- as.numeric(DFtraintest$title)
+
+sample = sample.split(DFtraintest$title, SplitRatio = .8)
+train = subset(DFtraintest, sample == TRUE)
+test  = subset(DFtraintest, sample == FALSE)
+
+#covert title to numeric to give each job title a unique ID
+totalsalary<- DF1$totalsalary
+gender<- DF1$gender
+title<- DF1$title
+otpercentage<- DF1$otpercentage
+duration<- DF1$duration
+```
+
+
+```{r}
+#didn't cross validate because using these to find specific trends
+#GENDER
+#does the wage gap seem to be resolved with controlling for title? Y
+mod<- lm(totalsalary~ gender+ title, data=DF1)
+rs <- summary(mod)$r.squared
+head(rs)
+
+mod1<- lm(totalsalary~ gender, data=DF1)
+rs1 <- summary(mod1)$r.squared
+head(rs1)
+
+mod2<- lm(totalsalary~ title, data=DF1)
+rs2 <- summary(mod2)$r.squared
+head(rs2)
+
+#does the otpercentage gap seem to be resolved with controlling for title? Y
+mod3<- lm(otpercentage~ gender+ title, data=train)
+rs3 <- summary(mod3)$r.squared
+head(rs3)
+
+mod4<- lm(otpercentage~ gender, data=DF1)
+rs4 <- summary(mod4)$r.squared
+head(rs4)
+
+mod5<- lm(otpercentage~ title, data=DF1)
+rs5 <- summary(mod5)$r.squared
+head(rs5)
+
+#does the experience gap seem to be resolved with controlling for title? Y
+mod6<- lm(duration~ gender+ title, data=DF1)
+rs6 <- summary(mod6)$r.squared
+head(rs6)
+
+mod7<- lm(duration~ gender, data=DF1)
+rs7 <- summary(mod7)$r.squared
+head(rs7)
+
+mod8<- lm(duration~ title, data=DF1)
+rs8 <- summary(mod8)$r.squared
+head(rs8)
+```
+
+
+```{r}
+#RACE
+#does the wage gap seem to be resolved with controlling for title? Y
+
+mod9<- lm(totalsalary ~ title + likelyrace, data=DF1)
+rs9 <- summary(mod9)$r.squared
+head(rs9)
+
+mod10<- lm(totalsalary~ likelyrace, data=DF1)
+rs10 <- summary(mod10)$r.squared
+head(rs10)
+
+mod11<- lm(totalsalary~ title, data=DF1)
+rs11 <- summary(mod11)$r.squared
+head(rs11)
+
+#does the otpercentage gap seem to be resolved with controlling for title? Y
+mod12<- lm(otpercentage ~ title + likelyrace, data=DF1)
+rs12 <- summary(mod12)$r.squared
+head(rs12)
+
+mod13<- lm(otpercentage~ likelyrace, data=DF1)
+rs13 <- summary(mod13)$r.squared
+head(rs13)
+
+mod14<- lm(otpercentage~ title, data=DF1)
+rs14 <- summary(mod14)$r.squared
+head(rs14)
+
+#does the experience gap seem to be resolved with controlling for title? Y
+mod15<- lm(duration ~ title + likelyrace, data=DF1)
+rs15 <- summary(mod15)$r.squared
+head(rs15)
+
+mod16<- lm(duration~ likelyrace, data=DF1)
+rs16 <- summary(mod16)$r.squared
+head(rs16)
+
+mod17<- lm(duration~ title, data=DF1)
+rs17 <- summary(mod17)$r.squared
+head(rs17)
+```
+
+
+```{r}
+#add in other possible explanatory variables
+otpercentage<- train$otpercentage
+loc<- train$loc
+likelyrace<- train$likelyrace
+hourly<- train$hourly
+duration<- train$duration
+gender<- train$gender
+
+MOD<- lm(otpercentage ~ loc + likelyrace + hourly + duration + gender + title, data=train)
+summary(MOD)
+
+MOD2<- lm(duration ~ loc + likelyrace + hourly + otpercentage + gender + title, data=train)
+summary(MOD2)
+
+MOD3<- lm(hourly ~ loc + likelyrace + duration + otpercentage + gender + title, data=train)
+summary(MOD3)
+```
+
+```{r}
+#Cross-validation
+
+# Make predictions and compute the R2, RMSE and MAE
+MODpredictions <- MOD %>% predict(test)
+MODpredictions<- as.numeric(MODpredictions)
+data.frame( R2 = R2(MODpredictions, test$otpercentage, na.rm=TRUE),
+            RMSE = RMSE(MODpredictions, test$otpercentage, na.rm=TRUE),
+            MAE = MAE(MODpredictions, test$otpercentage, na.rm=TRUE))
+PER<- RMSE(MODpredictions, test$otpercentage, na.rm=TRUE)/mean(test$otpercentage)
+head(PER)
+
+#plot
+plot(MODpredictions, test$otpercentage)
+dfmod<- as.data.frame(MODpredictions, test$otpercentage)
+ggplot(dfmod,aes(x=MODpredictions,y=test$otpercentage)) + stat_binhex()
+
+#AIC
+step(MOD)
+```
+
+
+```{r}
+#MOD2
+# Make predictions and compute the R2, RMSE and MAE
+MOD2predictions <- MOD2 %>% predict(test)
+MOD2predictions<- as.numeric(MOD2predictions)
+data.frame( R2 = R2(MOD2predictions, test$duration, na.rm=TRUE),
+            RMSE = RMSE(MOD2predictions, test$duration, na.rm=TRUE),
+            MAE = MAE(MOD2predictions, test$duration,na.rm=TRUE), na.rm=TRUE)
+PER2<- RMSE(MOD2predictions, test$duration, na.rm=TRUE)/mean(test$duration, na.rm=TRUE)
+head(PER2)
+
+#plot
+plot(MOD2predictions, test$duration)
+dfmod2<- as.data.frame(MOD2predictions, test$duration)
+ggplot(dfmod2,aes(x=MOD2predictions,y=test$duration)) + stat_binhex()
+
+#AIC
+step(MOD)
+```
+
+```{r}
+#MOD3
+# Make predictions and compute the R2, RMSE and MAE
+MOD3predictions <- MOD3 %>% predict(test)
+MOD3predictions<- as.numeric(MOD3predictions)
+data.frame( R2 = R2(MOD3predictions, test$hourly, na.rm=TRUE),
+            RMSE= RMSE(MOD3predictions, test$hourly, na.rm=TRUE),
+            MAE = MAE(MOD3predictions, test$hourly, na.rm=TRUE))
+
+PER3<- RMSE(MOD3predictions, test$hourly, na.rm=TRUE)/mean(test$hourly)
+head(PER3)
+
+#plot
+plot(MOD3predictions, test$hourly)
+dfmod3<- as.data.frame(MOD3predictions, test$hourly)
+ggplot(dfmod3,aes(x=MOD2predictions,y=test$hourly)) + stat_binhex()
+
+#AIC
+step(MOD3)
+```
+
+
+
+
+```{r}
+#agency and case length
+sample1 = sample.split(data311.1, SplitRatio = .8)
+train1 = subset(data311.1, sample1 == TRUE)
+test1  = subset(data311.1, sample1 == FALSE)
+caseXagency <- lm(train1$case_length~train1$agency)
+summary(caseXagency)
+
+# Make predictions and compute the R2, RMSE and MAE
+caseXagencypred <- caseXagency %>% predict(test1)
+caseXagencypred <- as.numeric(caseXagencypred )
+data.frame( RMSE = RMSE(caseXagencypred, test1$case_length,na.rm=TRUE),
+            MAE = MAE(caseXagencypred, test1$case_length, na.rm=TRUE))
+
+A<- RMSE(caseXagencypred,test1$case_length,na.rm=TRUE)
+B<- mean(na.omit(test1$case_length))
+PER<- A/B
+head(PER)
+
+#plot
+plot(na.omit(caseXagencypred, test1$case_length))
+ddffca<- as.data.frame(na.omit(caseXagencypred, test1$case_length))
+ggplot(ddffca, x=caseXagencypred,y=test1$case_length)) + stat_binhex()
+
+#AIC
+step(caseXagency)
+```
+
+
+```{r}
+#aggregate data to check if different agencies respond to complaints differently
+DF2<-subset(DF1, DF1$fiscal_year==c("2020"))
+#Manhattan
+#total spending
+DF3<-subset(DF2, DF2$work_location_borough==c("MANHATTAN"))
+DF4<-subset(data311.1, data311.1$borough==c("MANHATTAN"))
+
+Mspending<- sum(DF3$totalsalary)
+Mstatus<- DF4$status
+Mcaselength<- DF4$case_length
+Magency<- DF4$agency
+DFF<- data.frame(Mspending,Mstatus,Mcaselength, Magency)
+DFF$spending<- DFF$Mspending
+DFF$status<- DFF$Mstatus
+DFF$caselength<- DFF$Mcaselength
+DFF$agency<- DFF$Magency
+
+ddff1<- DFF[, c("spending", "status", "caselength", "agency")]
+
+#Brooklyn
+#total spending
+DF5<-subset(DF2, DF2$work_location_borough==c("BROOKLYN"))
+DF6<-subset(data311.1, data311.1$borough==c("BROOKLYN"))
+
+Bspending<- sum(DF5$totalsalary)
+Bstatus<- DF6$status
+Bcaselength<- DF6$case_length
+Bagency<- DF6$agency
+DFF1<- data.frame(Bspending,Bstatus,Bcaselength, Bagency)
+DFF1$spending<- DFF1$Bspending
+DFF1$status<- DFF1$Bstatus
+DFF1$caselength<- DFF1$Bcaselength
+DFF1$agency<- DFF1$Bagency
+
+ddff2<- DFF1[, c("spending", "status", "caselength", "agency")]
+head(ddff2)
+
+#Bronx
+#total spending
+DF7<-subset(DF2, DF2$work_location_borough==c("BRONX"))
+DF8<-subset(data311.1, data311.1$borough==c("BRONX"))
+
+BBspending<- sum(DF7$totalsalary)
+BBstatus<- DF8$status
+BBcaselength<- DF8$case_length
+BBagency<- DF8$agency
+DFF2<- data.frame(BBspending,BBstatus,BBcaselength, BBagency)
+DFF2$spending<- DFF2$BBspending
+DFF2$status<- DFF2$BBstatus
+DFF2$caselength<- DFF2$BBcaselength
+DFF2$agency<- DFF2$BBagency
+
+ddff3<- DFF2[, c("spending", "status", "caselength", "agency")]
+head(ddff3)
+
+
+#Queens
+#total spending
+DF9<-subset(DF2, DF2$work_location_borough==c("QUEENS"))
+DF10<-subset(data311.1, data311.1$borough==c("QUEENS"))
+
+Qspending<- sum(DF9$totalsalary)
+Qstatus<- DF10$status
+Qcaselength<- DF10$case_length
+Qagency<- DF10$agency
+
+DFF3<- data.frame(Qspending,Qstatus,Qcaselength, Qagency)
+
+DFF3$spending<- DFF3$Qspending
+DFF3$status<- DFF3$Qstatus
+DFF3$caselength<- DFF3$Qcaselength
+DFF3$agency<- DFF3$Qagency
+
+ddff4<- DFF3[, c("spending", "status", "caselength", "agency")]
+head(ddff4)
+
+#Richmond/Staten
+#total spending
+DF11<-subset(DF2, DF2$work_location_borough==c("RICHMOND"))
+DF12<-subset(data311.1, data311.1$borough==c("STATEN ISLAND"))
+
+Rspending<- sum(DF11$totalsalary)
+Rstatus<- DF12$status
+Rcaselength<- DF12$case_length
+Ragency<- DF12$agency
+
+DFF4<- data.frame(Rspending,Rstatus,Rcaselength, Ragency)
+
+DFF4$spending<- DFF4$Rspending
+DFF4$status<- DFF4$Rstatus
+DFF4$caselength<- DFF4$Rcaselength
+DFF4$agency<- DFF4$Ragency
+
+ddff5<- DFF4[, c("spending", "status", "caselength", "agency")]
+head(ddff5)
+
+combineddf<- rbind(ddff1, ddff2, ddff3, ddff4, ddff5)
+head(combineddf)
+```
+
+
+```{r}
+#train test split
+sample2 = sample.split(combineddf, SplitRatio = .8)
+train2 = subset(combineddf, sample1 == TRUE)
+test2  = subset(combineddf, sample1 == FALSE)
+
+
+#multinomial regression of status onto agency (no need to run agency)
+statusXagency <- multinom(status~ caselength+ spending + agency, data=train2)
+summary(statusXagency)
+hitmiss(statusXagency)
+
+# Make predictions and compute the R2, RMSE and MAE
+statusXagencypred <- statusXagency  %>% predict(test2)
+statusXagencypred <- as.numeric(statusXagencypred)
+test2$status<- as.numeric(test2$status)
+data.frame( RMSE = RMSE(statusXagencypred, test2$status,na.rm=TRUE),
+            MAE = MAE(statusXagencypred, test2$status, na.rm=TRUE))
+
+PER5<- RMSE(statusXagencypred, test2$status,na.rm=TRUE)/mean(test2$status)
+head(PER5)
+     
+#plot
+plot(statusXagencypred, test2$status)
+dfstatusagency<- as.data.frame(na.omit(statusXagencypred, test2$status))
+ggplot(dfstatusagency,aes(x=statusXagency,y=test2$status)) + stat_binhex()
+
+#AIC
+step(statusXagency)
+```
+
+
+```{r}
+#B
+#find 'factors' of attrition rate; data at the 'event' and not 'person' level
+#time of quitting
+DF1$name<- paste(DF1$first_name, DF1$last_name)
+name<- DF1$name
+department<- DF1$agency_name
+location<- DF1$loc
+DF1$survived<- DF1$leave_status_as_of_july_31
+DF1$survived<- car::recode(DF1$survived, "'CEASED'=0; 'ACTIVE'=1; 'ON LEAVE'=1; 'ON SEPARATION LEAVE'=1; 'SEASONAL'=1")
+survived<- DF1$survived
+#duration of employment
+DF1$year<- DF1$fiscal_year
+DF1$duration<- DF1$year- DF1$start
+```
+
+```{r}
+#train-test split
+sample3 = sample.split(DF1, SplitRatio = .8)
+train3 = subset(DF1, sample3 == TRUE)
+test3  = subset(DF1, sample3 == FALSE)
+
+test3$race<- test3$likelyrace
+
+#logit model
+survived<- train3$survived
+hourly<- train3$hourly
+agency<- train3$agency_name
+loc<- train3$loc
+duration<- train3$duration
+title<- train3$title_description
+race<- train3$likelyrace
+gender<- train3$gender
+
+log <-glm(survived ~ hourly + loc + duration + race + gender, data=train3, family = "binomial")
+summary(log)
+hitmiss(log)
+head(loc)
+
+# Make predictions and compute the R2, RMSE and MAE
+logpred <- log  %>% predict(test3, type="response")
+logpred <- as.numeric(logpred)
+test3$survived<- as.numeric(test3$survived)
+data.frame( RMSE = RMSE(logpred, test3$survived,na.rm=TRUE),
+            MAE = MAE(logpred, test3$survived, na.rm=TRUE))
+
+PER6<- RMSE(logpred, test3$survived, na.rm=TRUE)/mean(test3$survived)
+head(PER6)
+     
+#plot
+plot(logpred, test3$survived)
+dfstatusagency<- as.data.frame(na.omit(logpred, test3$survived))
+
+#AIC
+step(log)
+summary(log)
+```
+
+
+```{r}
+#Cox models
+cox <- coxph(Surv(duration, survived) ~ hourly + loc + race + gender , data = train3)
+summary(cox)
+cox_fit <- survfit(cox)
+plot(cox_fit)
+
+## S3 method for class 'cph'
+validate(cox, method="boot")
+
+test.ph <- cox.zph(cox)
+ggcoxzph(test.ph)
+```
+
