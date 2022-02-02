@@ -2,11 +2,11 @@
 My Assignments for Columbia STAT 3106 class
 
 
-Project 1:
+[Project 1](https://github.com/ng4567/DataMiningSTAT3106/blob/main/project.1%20write-up.pdf):
 
 Models to predict NYC government agency response time to cases, and if gender affects NYC government worker salaries
 
-Project 2:
+[Project 2](https://github.com/ng4567/DataMiningSTAT3106/blob/main/Project%202%20Report.pdf):
 Using NLP to parse resumes and recommend jobs to for the user to apply for. Additionally, we had mined data off indeed.com to compare resumes to to give the best recomendations back.
 
 [Final](https://github.com/ng4567/DataMiningSTAT3106/blob/main/Final%20Political%20Data%20Mining%20Project.pdf):
