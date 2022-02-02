@@ -9,7 +9,7 @@ Models to predict NYC government agency response time to cases, and if gender af
 Project 2:
 Using NLP to parse resumes and recommend jobs to for the user to apply for. Additionally, we had mined data off indeed.com to compare resumes to to give the best recomendations back.
 
-Final:
+[Final](https://github.com/ng4567/DataMiningSTAT3106/blob/main/Final%20Political%20Data%20Mining%20Project.pdf):
 
 Summary:
 
